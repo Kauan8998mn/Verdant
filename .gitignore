@@ -1,0 +1,11 @@
+node_modules/
+client/dist/
+data/*.sqlite*
+logs/*.log
+uploads/*
+!uploads/.gitkeep
+.env
+*.pem
+*.key
+*.crt
+.DS_Store

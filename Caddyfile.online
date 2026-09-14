@@ -1,0 +1,16 @@
+{$VERDANT_DOMAIN} {
+  encode zstd gzip
+
+  basic_auth {
+    {$VERDANT_AUTH_USER} {$VERDANT_AUTH_HASH}
+  }
+
+  header {
+    Strict-Transport-Security "max-age=31536000"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    -Server
+  }
+
+  reverse_proxy 127.0.0.1:43110
+}

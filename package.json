@@ -1,0 +1,40 @@
+{
+  "name": "verdant-lan",
+  "version": "0.5.0-phase8-security",
+  "private": true,
+  "type": "module",
+  "description": "Private text/voice/screen communication platform for up to six people; Phase 8 security with protected servers, rate limiting, native fullscreen and persistent cross-server voice.",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "mediasoup": "3.26.0",
+    "mediasoup-client": "3.22.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "puppeteer-core": "25.8.0",
+    "typescript": "5.8.3"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node --experimental-strip-types server/src/index.ts",
+    "dev": "node --watch --experimental-strip-types server/src/index.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:media": "node scripts/test-media.mjs",
+    "audit": "node scripts/spec-audit.mjs",
+    "audit:phase4": "node scripts/spec-audit.mjs --phase=4",
+    "tls:generate": "node scripts/generate-lan-tls.mjs",
+    "check": "npm run build && npm test && npm run audit",
+    "audit:phase5": "node scripts/spec-audit.mjs --phase=5",
+    "test:phase5": "node scripts/test-media.mjs",
+    "test:superstress": "node --experimental-strip-types --test tests/*.test.ts",
+    "audit:phase6": "node scripts/spec-audit.mjs --phase=6",
+    "audit:phase7": "node scripts/spec-audit.mjs --phase=7"
+    ,"audit:phase8": "node scripts/spec-audit.mjs --phase=8"
+  },
+  "allowScripts": {
+    "mediasoup@3.26.0": true,
+    "esbuild@0.28.2": true
+  }
+}

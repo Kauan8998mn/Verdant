@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0c1413" />
+  <title>Verdant LAN</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app" class="app-shell" aria-live="polite">
+    <nav id="server-rail" class="server-rail" aria-label="Servidores"></nav>
+    <aside id="channel-sidebar" class="channel-sidebar"></aside>
+    <main id="main-panel" class="main-panel"></main>
+    <aside id="member-sidebar" class="member-sidebar"></aside>
+  </div>
+
+  <dialog id="entry-dialog" class="modal"></dialog>
+  <dialog id="channel-dialog" class="modal"></dialog>
+  <dialog id="settings-dialog" class="modal settings-modal"></dialog>
+  <dialog id="files-dialog" class="modal files-modal"></dialog>
+  <dialog id="file-preview-dialog" class="modal preview-modal"></dialog>
+  <div id="toasts" class="toasts" aria-live="assertive"></div>
+
+  <script type="module" src="/assets/main.js"></script>
+</body>
+</html>
