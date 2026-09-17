@@ -31,6 +31,8 @@ export async function readJson(req: IncomingMessage, maxBytes = 64 * 1024): Prom
 }
 
 export function bearerToken(req: IncomingMessage): string | undefined {
+  const session = req.headers['x-verdant-session'];
+  if (typeof session === 'string') return /^[A-Za-z0-9_-]{43}$/.test(session) ? session : undefined;
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return undefined;
   return header.slice(7).trim() || undefined;

@@ -1,3 +1,4 @@
+import type { TurnCredentials } from './turn.ts';
 import * as mediasoup from 'mediasoup';
 import { hasPermission } from '../../shared/src/domain.ts';
 import { isScreenFps, isScreenResolution } from '../../shared/src/screen.ts';
@@ -42,6 +43,9 @@ interface MediaServiceOptions {
   mediaPort: number;
   announcedAddress?: string;
   exposeInternalIp?: boolean;
+  debug?: boolean;
+  onFatal?: () => void;
+  turn?: TurnCredentials;
 }
 
 export class MediaService implements MediaBackend {
@@ -57,9 +61,13 @@ export class MediaService implements MediaBackend {
   #peers = new Map<string, PeerMedia>();
   #voice = new VoiceRegistry();
   #sink?: MediaSignalSink;
+  #debug = false;
+  #turn?: TurnCredentials;
 
   private constructor(options: MediaServiceOptions, worker: any, webRtcServer: any) {
     this.#db = options.db;
+    this.#debug = Boolean(options.debug);
+    this.#turn = options.turn;
     this.#logger = options.logger;
     this.listenAddresses = [...options.listenAddresses];
     this.mediaPort = options.mediaPort;
@@ -76,6 +84,7 @@ export class MediaService implements MediaBackend {
     });
     worker.on('died', (error: Error) => {
       options.logger.error('Worker mediasoup encerrou inesperadamente', { error: error.message });
+      options.onFatal?.();
     });
 
     const listenInfos = options.listenAddresses.flatMap(ip => [
@@ -83,7 +92,9 @@ export class MediaService implements MediaBackend {
       { protocol: 'tcp' as const, ip, port: options.mediaPort, ...(options.announcedAddress ? { announcedAddress: options.announcedAddress, exposeInternalIp: Boolean(options.exposeInternalIp) } : {}) }
     ]);
 
-    const webRtcServer = await worker.createWebRtcServer({ listenInfos });
+    let webRtcServer;
+    try { webRtcServer = await worker.createWebRtcServer({ listenInfos }); }
+    catch (error) { worker.close(); throw error; }
     options.logger.media('SFU mediasoup iniciado', {
       workerPid: worker.pid,
       mediaPort: options.mediaPort,
@@ -93,6 +104,8 @@ export class MediaService implements MediaBackend {
     return new MediaService(options, worker, webRtcServer);
   }
 
+  healthy(): boolean { return !this.#worker.closed && !this.#webRtcServer.closed; }
+
   setSignalSink(sink: MediaSignalSink): void {
     this.#sink = sink;
   }
@@ -100,6 +113,8 @@ export class MediaService implements MediaBackend {
   async handleRequest(session: Session, action: string, data: any): Promise<any> {
     this.#voice.syncSession(session.token, { displayName: session.displayName, role: session.role });
     switch (action) {
+      case 'ice.config': return this.#turn?.issue() ?? { iceServers: [], iceTransportPolicy: 'all', debug: this.#debug };
+      case 'transport.diagnostic': return this.#diagnostic(session, data);
       case 'voice.join': return await this.#joinVoice(session, data);
       case 'voice.leave': return await this.#leaveVoice(session.token, true);
       case 'voice.list': return this.#voiceSnapshot(session.serverId);
@@ -134,6 +149,25 @@ export class MediaService implements MediaBackend {
     this.#rooms.clear();
     try { this.#webRtcServer.close(); } catch {}
     try { this.#worker.close(); } catch {}
+  }
+
+  #diagnostic(session: Session, data: any): { ok: true } {
+    const peer = this.#requirePeer(session);
+    const transport = this.#findTransport(peer, data?.transportId);
+    if (!transport) throw new MediaError('TRANSPORT_NOT_FOUND', 'Transporte não encontrado.');
+    if (this.#debug) {
+      const types = ['host', 'srflx', 'prflx', 'relay'];
+      this.#logger.media('client.ice.selected', {
+        user: session.displayName, transportId: transport.id, direction: transport.appData.direction,
+        candidateType: types.includes(data?.candidateType) ? data.candidateType : 'unknown',
+        remoteCandidateType: types.includes(data?.remoteCandidateType) ? data.remoteCandidateType : 'unknown',
+        protocol: ['udp','tcp'].includes(data?.protocol) ? data.protocol : 'unknown',
+        relayProtocol: ['udp','tcp','tls'].includes(data?.relayProtocol) ? data.relayProtocol : 'unknown',
+        route: data?.candidateType === 'relay' ? 'TURN' : 'direct',
+        rttMs: Number.isFinite(data?.rttMs) ? Math.min(60000, Math.max(0, Math.round(data.rttMs))) : undefined
+      });
+    }
+    return { ok: true };
   }
 
   async #joinVoice(session: Session, data: any): Promise<any> {
@@ -253,10 +287,17 @@ export class MediaService implements MediaBackend {
       appData: { token: session.token, serverId: session.serverId, channelId: member.channelId, direction }
     });
 
+    const trace = (event: string, detail: Record<string, unknown>) => {
+      if (this.#debug) this.#logger.media(event, { user: session.displayName, transportId: transport.id, direction, ...detail });
+    };
+    trace('transport.created', { candidates: transport.iceCandidates.map((c: any) => ({ address: c.address ?? c.ip, port: c.port, protocol: c.protocol, type: c.type })) });
+    transport.on('iceselectedtuplechange', (tuple: any) => trace('ice.selected', { protocol: tuple.protocol, localPort: tuple.localPort }));
     transport.on('dtlsstatechange', (state: string) => {
+      trace('dtls.state', { state });
       if (state === 'closed') transport.close();
     });
     transport.on('icestatechange', (state: string) => {
+      trace('ice.state', { state });
       this.#eventTo(session.token, 'voice.transportState', { direction, iceState: state });
     });
 

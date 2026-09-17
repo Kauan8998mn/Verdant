@@ -81,7 +81,7 @@ test('0.3.6 real: repetir o mesmo uploadId não cria arquivo/mensagem duplicados
     assert.equal(b.file.id, a.file.id);
     assert.equal(b.message.id, a.message.id);
 
-    const history: any = await (await fetch(`${base}/api/channels/${channelId}/messages?limit=50`)).json();
+    const history: any = await (await fetch(`${base}/api/channels/${channelId}/messages?limit=50`, { headers: { authorization: `Bearer ${token}` } })).json();
     assert.equal(history.messages.length, 1);
     const stored = fs.readdirSync(path.join(dataDir, 'uploads')).filter(name => !name.endsWith('.part'));
     assert.equal(stored.length, 1);

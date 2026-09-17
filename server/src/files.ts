@@ -16,10 +16,12 @@ interface FileGrant {
 export class FileService {
   #db: AppDatabase;
   #uploadsDir: string;
+  readonly maxBytes: number;
   #grants = new Map<string, FileGrant>();
 
-  constructor(db: AppDatabase, uploadsDir: string) {
+  constructor(db: AppDatabase, uploadsDir: string, maxBytes = 50 * 1024 * 1024) {
     this.#db = db;
+    this.maxBytes = maxBytes;
     this.#uploadsDir = uploadsDir;
     fs.mkdirSync(uploadsDir, { recursive: true });
     this.#backfillTextIndex();
@@ -33,8 +35,8 @@ export class FileService {
     clientUploadId?: string;
   }): Promise<FileRow> {
     const contentLength = parseContentLength(req.headers['content-length']);
-    if (contentLength !== undefined && contentLength > MAX_FILE_BYTES) {
-      throw new HttpError(413, 'Arquivo acima do limite de 500 MB.');
+    if (contentLength !== undefined && contentLength > this.maxBytes) {
+      throw new HttpError(413, `Arquivo acima do limite de ${this.maxBytes / 1024 / 1024} MB.`);
     }
     if (contentLength !== undefined) this.#assertDiskSpace(contentLength);
 
@@ -56,7 +58,7 @@ export class FileService {
         if (outputError) throw outputError;
         const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
         total += chunk.length;
-        if (total > MAX_FILE_BYTES) throw new HttpError(413, 'Arquivo acima do limite de 500 MB.');
+        if (total > this.maxBytes) throw new HttpError(413, `Arquivo acima do limite de ${this.maxBytes / 1024 / 1024} MB.`);
         hash.update(chunk);
         if (sniffBytes < 512) {
           const slice = chunk.subarray(0, Math.min(chunk.length, 512 - sniffBytes));

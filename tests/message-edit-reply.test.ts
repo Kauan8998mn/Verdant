@@ -154,7 +154,7 @@ test('mensagens: resposta, edição apenas pelo autor e legenda editável em ane
     assert.equal(recaptioned.message.content, 'legenda alterada');
     assert.equal(typeof recaptioned.message.editedAt, 'string');
 
-    const history: any = await (await fetch(`${base}/api/channels/${channelId}/messages?limit=50`)).json();
+    const history: any = await (await fetch(`${base}/api/channels/${channelId}/messages?limit=50`, { headers: { authorization: `Bearer ${ownerToken}` } })).json();
     const storedReply = history.messages.find((item: any) => item.id === reply.id);
     const storedAttachment = history.messages.find((item: any) => item.id === uploaded.message.id);
     assert.equal(storedReply.content, 'resposta editada');

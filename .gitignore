@@ -9,3 +9,17 @@ uploads/*
 *.key
 *.crt
 .DS_Store
+
+dist/
+.env.*
+!.env.example
+*.env
+!*.env.example
+/backups/
+/test-results/
+*.sqlite*
+*.log
+*.part
+*.p12
+*.pfx
+__pycache__/

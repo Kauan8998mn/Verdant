@@ -10,6 +10,7 @@ export interface MediaBackend {
   readonly enabled: boolean;
   readonly mediaPort?: number;
   readonly listenAddresses: string[];
+  healthy?(): boolean;
   setSignalSink(sink: MediaSignalSink): void;
   handleRequest(session: Session, action: string, data: any): Promise<any>;
   disconnectSession(token: string): Promise<void>;

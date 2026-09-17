@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import { proxyPrincipal } from './proxy-auth.ts';
+import type { AppConfig } from './config.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { MAX_MESSAGE_CHARS, hasPermission, normalizeName, validateDisplayName, type ChannelType, type Role } from '../../shared/src/domain.ts';
 import type { AppDatabase } from './database.ts';
@@ -20,6 +22,7 @@ interface RouteDeps {
   media: MediaBackend;
   secureTransport: boolean;
   port: number;
+  config?: AppConfig;
 }
 
 export async function handleApi(req: IncomingMessage, res: ServerResponse, deps: RouteDeps): Promise<boolean> {
@@ -28,16 +31,12 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, deps:
   if (!url.pathname.startsWith('/api/')) return false;
 
   try {
+    const principal = deps.config?.production ? proxyPrincipal(req) : undefined;
     if (method === 'GET' && url.pathname === '/api/health') {
-      sendJson(res, 200, {
-        ok: true,
-        app: 'verdant-lan',
-        version: '0.5.0-phase8-security',
-        phases: deps.media.enabled ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [0, 1, 2, 3, 8],
-        secureTransport: deps.secureTransport,
-        media: { enabled: deps.media.enabled, port: deps.media.mediaPort, listenAddresses: deps.media.listenAddresses },
-        now: new Date().toISOString()
-      });
+      const database = deps.db.healthy();
+      const mediasoup = deps.media.healthy?.() ?? deps.media.enabled;
+      const ok = database && (mediasoup || Boolean(deps.config?.mediaDisabled));
+      sendJson(res, ok ? 200 : 503, { ok, server: true, database, mediasoup });
       return true;
     }
 
@@ -46,11 +45,12 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, deps:
         version: '0.5.0-phase8-security',
         phases: deps.media.enabled ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [0, 1, 2, 3, 8],
         servers: deps.db.listServers(),
-        addresses: detectNetworkAddresses().map(item => ({ ...item, port: deps.port })),
+        addresses: deps.config?.production ? [] : detectNetworkAddresses().map(item => ({ ...item, port: deps.port })),
         secureTransport: deps.secureTransport,
         mediaSecureContextRequired: true,
-        media: { enabled: deps.media.enabled, port: deps.media.mediaPort, listenAddresses: deps.media.listenAddresses },
-        participantLimit: 6
+        media: { enabled: deps.media.enabled, port: deps.media.mediaPort, listenAddresses: deps.config?.production ? [] : deps.media.listenAddresses },
+        participantLimit: 6,
+        uploadMaxBytes: deps.files.maxBytes
       });
       return true;
     }
@@ -189,7 +189,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, deps:
       const description = typeof body.description === 'string' ? body.description.trim().slice(0, 280) : '';
       const password = validateServerPassword(body.password);
       const server = deps.db.createServer(serverName, description, password ? hashServerPassword(password) : undefined);
-      const session = deps.sessions.createOwnerSession(server.id, owner.value);
+      const session = deps.sessions.createOwnerSession(server.id, owner.value, principal);
       deps.logger.info('Servidor criado', { serverId: server.id, name: server.name, owner: session.displayName });
       sendJson(res, 201, {
         server,
@@ -234,11 +234,11 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, deps:
       const serverId = decodeURIComponent(joinMatch[1]);
       const body = asObject(await readJson(req));
       const storedPassword = deps.db.getServerPasswordHash(serverId);
-      if (storedPassword && !deps.sessions.canResume(serverId, body.name, body.resumeToken)) {
+      if (storedPassword && !deps.sessions.canResume(serverId, body.name, body.resumeToken, principal)) {
         const supplied = validateServerPassword(body.password, false);
         if (!verifyServerPassword(supplied, storedPassword)) throw new HttpError(401, 'Senha do servidor incorreta.');
       }
-      const session = deps.sessions.join(serverId, body.name, body.resumeToken);
+      const session = deps.sessions.join(serverId, body.name, body.resumeToken, principal);
       sendJson(res, 200, {
         session: publicSession(session, true),
         server: deps.db.getServer(serverId),
@@ -251,6 +251,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, deps:
     if (method === 'GET' && channelsListMatch) {
       const serverId = decodeURIComponent(channelsListMatch[1]);
       if (!deps.db.getServer(serverId)) throw new HttpError(404, 'Servidor não encontrado.');
+      requireSession(req, deps.sessions, serverId);
       sendJson(res, 200, { channels: deps.db.listChannels(serverId) });
       return true;
     }
@@ -313,6 +314,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, deps:
       const channelId = decodeURIComponent(messagesMatch[1]);
       const channel = deps.db.getChannel(channelId);
       if (!channel || channel.type !== 'text') throw new HttpError(404, 'Canal de texto não encontrado.');
+      requireSession(req, deps.sessions, channel.serverId);
       const limit = Number.parseInt(url.searchParams.get('limit') ?? '50', 10);
       const before = url.searchParams.get('before') ?? undefined;
       sendJson(res, 200, { messages: deps.db.listMessages(channelId, Number.isFinite(limit) ? limit : 50, before) });
@@ -540,7 +542,7 @@ function validateAvatarDataUrl(value: unknown): string | undefined {
 
 function requireSession(req: IncomingMessage, sessions: SessionManager, serverId: string) {
   const session = sessions.get(bearerToken(req));
-  if (!session || session.serverId !== serverId) throw new HttpError(401, 'Sessão inválida ou expirada.');
+  if (!session || session.serverId !== serverId || (session.principal && session.principal !== proxyPrincipal(req))) throw new HttpError(401, 'Sessão inválida ou expirada.');
   return session;
 }
 

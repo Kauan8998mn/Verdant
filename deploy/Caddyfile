@@ -1,0 +1,29 @@
+# Generated with validated settings by configure; no access log containing WS tokens.
+{
+  servers {
+    protocols h1 h2
+  }
+}
+https://@@APP_HOST@@ {
+  basic_auth {
+    import /etc/verdant/caddy-users
+  }
+  request_body {
+    max_size @@UPLOAD_BYTES@@
+  }
+  encode zstd gzip
+  header {
+    Strict-Transport-Security "max-age=31536000"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    -Server
+  }
+  reverse_proxy 127.0.0.1:@@APP_PORT@@ {
+    header_up X-Verdant-User {http.auth.user.id}
+    header_up X-Verdant-Client-IP {http.request.remote.host}
+  }
+}
+# Same Caddy obtains/renews the TURN hostname certificate. Coturn uses a copy.
+https://@@TURN_HOST@@ {
+  respond "TURN is available on its configured TURN ports." 404
+}

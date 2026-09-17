@@ -15,6 +15,8 @@ export class RealtimeClient {
   #attempt = 0;
   #pingTimer?: number;
   #lastPing = 0;
+  #lastPong = 0;
+  #retryTimer?: number;
   #everOpened = false;
   #pendingMedia = new Map<string, PendingMediaRequest>();
   #purpose: 'app' | 'voice';
@@ -44,6 +46,8 @@ export class RealtimeClient {
 
   stop(): void {
     this.#stopped = true;
+    if (this.#retryTimer) window.clearTimeout(this.#retryTimer);
+    this.#retryTimer = undefined;
     if (this.#pingTimer) window.clearInterval(this.#pingTimer);
     this.#pingTimer = undefined;
     this.#rejectPending('Conexão encerrada.');
@@ -99,6 +103,7 @@ export class RealtimeClient {
     this.#ws = socket;
 
     socket.addEventListener('open', () => {
+      if (socket !== this.#ws) { socket.close(); return; }
       const wasReconnect = this.#everOpened;
       this.#everOpened = true;
       this.#attempt = 0;
@@ -108,17 +113,25 @@ export class RealtimeClient {
       this.onConnectionOpen?.(wasReconnect);
     });
 
-    socket.addEventListener('message', event => this.#handle(event.data));
+    socket.addEventListener('message', event => { if (socket === this.#ws) this.#handle(event.data); });
     socket.addEventListener('error', () => { /* close agenda reconexão */ });
     socket.addEventListener('close', () => {
+      if (socket !== this.#ws) return;
       if (this.#pingTimer) window.clearInterval(this.#pingTimer);
       this.#pingTimer = undefined;
       this.#rejectPending('Conexão perdida durante operação de mídia.');
       if (this.#stopped) return;
       this.onConnectionLost?.();
       if (this.#purpose === 'app') updateState({ wsStatus: 'reconnecting' });
+      if (this.#attempt >= 8) {
+        this.#stopped = true;
+        this.#rejectOpenWaiters('Conexão indisponível. Entre novamente no servidor.');
+        if (this.#purpose === 'app') updateState({ wsStatus: 'offline' });
+        this.onError?.('Não foi possível reconectar. Entre novamente no servidor ou na chamada.');
+        return;
+      }
       const delay = Math.min(5000, 400 * 2 ** Math.min(this.#attempt++, 4));
-      window.setTimeout(() => this.#connect(true), delay);
+      this.#retryTimer = window.setTimeout(() => this.#connect(true), delay);
     });
   }
 
@@ -200,13 +213,16 @@ export class RealtimeClient {
       return;
     }
     if (event.type === 'pong' && typeof event.sentAt === 'number') {
+      this.#lastPong = Date.now();
       if (this.#purpose === 'app') updateState({ rtt: Math.max(0, Date.now() - event.sentAt) });
     }
   }
 
   #startPing(): void {
     if (this.#pingTimer) window.clearInterval(this.#pingTimer);
+    this.#lastPong = Date.now();
     const ping = () => {
+      if (Date.now() - this.#lastPong > 25_000) { this.#ws?.close(); return; }
       this.#lastPing = Date.now();
       this.#send({ type: 'ping', sentAt: this.#lastPing });
     };

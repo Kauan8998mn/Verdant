@@ -1,3 +1,4 @@
+import { proxyPrincipal } from './proxy-auth.ts';
 import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -41,7 +42,7 @@ export class WebSocketHub {
       if (url.pathname !== '/ws') return this.#reject(socket, 404, 'Not Found');
       const token = url.searchParams.get('token') ?? undefined;
       const session = this.#sessions.get(token);
-      if (!session) return this.#reject(socket, 401, 'Unauthorized');
+      if (!session || (session.principal && session.principal !== proxyPrincipal(req))) return this.#reject(socket, 401, 'Unauthorized');
 
       const key = req.headers['sec-websocket-key'];
       const version = req.headers['sec-websocket-version'];
@@ -108,6 +109,11 @@ export class WebSocketHub {
       this.#logger.error('Falha durante upgrade WebSocket', { error: error instanceof Error ? error.message : String(error) });
       socket.destroy();
     }
+  }
+
+  close(): void {
+    for (const peer of this.#peers.values()) { peer.closed = true; peer.socket.destroy(); }
+    this.#peers.clear();
   }
 
   broadcastServerState(serverId: string): void {
@@ -177,6 +183,7 @@ export class WebSocketHub {
       let length = second & 0x7f;
       let offset = 2;
 
+      if ((first & 0x70) !== 0 || (opcode >= 8 && length > 125)) return this.#closeWithCode(peer, 1002, 'Frame inválido');
       if (!fin) return this.#closeWithCode(peer, 1003, 'Fragmentação não suportada');
       if (!masked) return this.#closeWithCode(peer, 1002, 'Frame do cliente deve ser mascarado');
 
@@ -345,6 +352,7 @@ export class WebSocketHub {
   }
 
   #sendFrame(socket: Duplex, opcode: number, payload: Buffer): void {
+    if (socket.writableLength > 2 * 1024 * 1024) { socket.destroy(); return; }
     const length = payload.length;
     let header: Buffer;
     if (length < 126) {

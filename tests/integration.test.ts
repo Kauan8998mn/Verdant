@@ -121,7 +121,7 @@ test('fluxo real: servidor + nomes únicos + WebSocket + histórico persistente'
     assert.equal(event.message.content, 'Olá pela LAN');
     assert.equal(event.message.authorName, 'Uriel');
 
-    const historyResponse = await fetch(`${base}/api/channels/${channelId}/messages?limit=50`);
+    const historyResponse = await fetch(`${base}/api/channels/${channelId}/messages?limit=50`, { headers: { authorization: `Bearer ${ownerToken}` } });
     const history: any = await historyResponse.json();
     assert.equal(history.messages.length, 1);
     assert.equal(history.messages[0].content, 'Olá pela LAN');
@@ -134,7 +134,10 @@ test('fluxo real: servidor + nomes únicos + WebSocket + histórico persistente'
     await waitHealth(base, child);
     const bootstrap: any = await (await fetch(`${base}/api/bootstrap`)).json();
     assert.equal(bootstrap.servers.some((server: any) => server.id === serverId), true);
-    const persisted: any = await (await fetch(`${base}/api/channels/${channelId}/messages?limit=50`)).json();
+    const rejoined: any = await (await fetch(`${base}/api/servers/${serverId}/join`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Uriel' })
+    })).json();
+    const persisted: any = await (await fetch(`${base}/api/channels/${channelId}/messages?limit=50`, { headers: { authorization: `Bearer ${rejoined.session.token}` } })).json();
     assert.equal(persisted.messages[0].content, 'Olá pela LAN');
   } finally {
     await stopServer(child);
@@ -143,7 +146,7 @@ test('fluxo real: servidor + nomes únicos + WebSocket + histórico persistente'
 });
 
 
-test('Fase 3 real: upload, MIME verificado, histórico, download e limite de 500 MB', async () => {
+test('Fase 3 real: upload, MIME verificado, histórico, download e limite configurado de 50 MB', async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'verdant-files-'));
   const dataDir = path.join(temp, 'data');
   const logDir = path.join(temp, 'logs');
@@ -171,7 +174,7 @@ test('Fase 3 real: upload, MIME verificado, histórico, download e limite de 500
     assert.equal(upload.file.size, pdf.length);
     assert.equal(upload.message.attachment.originalName, 'manual.pdf');
 
-    const history: any = await (await fetch(`${base}/api/channels/${channelId}/messages?limit=50`)).json();
+    const history: any = await (await fetch(`${base}/api/channels/${channelId}/messages?limit=50`, { headers: { authorization: `Bearer ${token}` } })).json();
     assert.equal(history.messages.length, 1);
     assert.equal(history.messages[0].attachment.id, upload.file.id);
 

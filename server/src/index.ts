@@ -1,11 +1,13 @@
 import fs from 'node:fs';
+import { TurnCredentials } from './turn.ts';
+import { proxyPrincipal, clientRateKey } from './proxy-auth.ts';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AppDatabase } from './database.ts';
 import { FileService } from './files.ts';
-import { loadConfig } from './config.ts';
+import { loadConfig, resolveAnnouncedAddress } from './config.ts';
 import { Logger } from './logger.ts';
 import { handleApi } from './routes.ts';
 import { serveStatic } from './static-files.ts';
@@ -16,26 +18,27 @@ import { DisabledMediaBackend, type MediaBackend } from './media-contract.ts';
 import { SlidingWindowRateLimiter } from './security.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.resolve(here, '..', '..');
+const rootDir = process.env.VERDANT_ROOT ?? path.resolve(here, path.basename(here) === 'dist' ? '..' : '../..');
 const config = loadConfig(rootDir);
+const turn = new TurnCredentials();
 fs.mkdirSync(config.dataDir, { recursive: true });
-fs.mkdirSync(config.logDir, { recursive: true });
+if (!config.journalOnly) fs.mkdirSync(config.logDir, { recursive: true });
 fs.mkdirSync(config.uploadsDir, { recursive: true });
 
-const logger = new Logger(config.logDir);
-const db = new AppDatabase(config.dataDir);
+const logger = new Logger(config.logDir, config.journalOnly);
+const db = new AppDatabase(config.dataDir, config.databasePath);
 const sessions = new SessionManager(db);
-const files = new FileService(db, config.uploadsDir);
+const files = new FileService(db, config.uploadsDir, config.uploadMaxBytes);
 const apiLimiter = new SlidingWindowRateLimiter(240, 60_000);
 const authLimiter = new SlidingWindowRateLimiter(16, 60_000);
 
 let media: MediaBackend = new DisabledMediaBackend();
 if (!config.mediaDisabled) {
-  const detected = detectNetworkAddresses().map(item => item.address);
+  const detected = config.production ? [] : detectNetworkAddresses().map(item => item.address);
   const addresses = config.mediaListenIps ?? [...new Set(['127.0.0.1', ...detected])];
   try {
     const { MediaService } = await import('./media.ts');
-    media = await MediaService.create({ db, logger, listenAddresses: addresses, mediaPort: config.mediaPort, announcedAddress: config.mediaAnnouncedAddress, exposeInternalIp: config.exposeInternalMediaIp });
+    media = await MediaService.create({ db, logger, listenAddresses: addresses, mediaPort: config.mediaPort, announcedAddress: await resolveAnnouncedAddress(config), exposeInternalIp: config.exposeInternalMediaIp, debug: config.debugWebrtc, turn, onFatal: () => shutdown('mediasoup-worker-died') });
   } catch (error) {
     logger.error('Não foi possível iniciar o SFU mediasoup', { error: error instanceof Error ? error.message : String(error) });
     console.error('\nFalha ao iniciar a mídia (voz/tela/SFU).');
@@ -60,7 +63,13 @@ const requestHandler: http.RequestListener = async (req, res) => {
   const started = performance.now();
   applySecurityHeaders(res);
   const requestPath = (req.url ?? '/').split('?')[0] ?? '/';
-  const remoteKey = req.socket.remoteAddress ?? 'unknown';
+  if (config.production && requestPath !== '/api/health' && !proxyPrincipal(req)) {
+    res.writeHead(401); res.end(); return;
+  }
+  if (config.production && !['GET', 'HEAD', 'OPTIONS'].includes(req.method ?? '') && req.headers.origin !== config.publicOrigin) {
+    res.writeHead(403); res.end(); return;
+  }
+  const remoteKey = clientRateKey(req, config.production);
   const isAuthMutation = req.method === 'POST' && (requestPath === '/api/servers' || /\/api\/servers\/[^/]+\/join$/.test(requestPath));
   const rate = (isAuthMutation ? authLimiter : apiLimiter).consume(`${remoteKey}:${isAuthMutation ? 'auth' : 'api'}`);
   if (!rate.allowed) {
@@ -82,7 +91,8 @@ const requestHandler: http.RequestListener = async (req, res) => {
       files,
       media,
       secureTransport: tlsEnabled || Boolean(config.publicOrigin?.startsWith('https://')),
-      port: config.port
+      port: config.port,
+      config
     });
     if (!handled) {
       const url = new URL(req.url ?? '/', 'http://localhost');
@@ -109,7 +119,7 @@ const server = tlsEnabled
   : http.createServer(requestHandler);
 
 server.on('upgrade', (req, socket, head) => {
-  if (!hostAllowed(req.headers.host, config.allowedHosts) || !originAllowed(req.headers.origin, config.publicOrigin)) {
+  if ((config.production && !proxyPrincipal(req)) || !hostAllowed(req.headers.host, config.allowedHosts) || !originAllowed(req.headers.origin, config.publicOrigin)) {
     socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     return;
   }
@@ -127,7 +137,7 @@ server.listen(config.port, config.host, () => {
   const scheme = tlsEnabled ? 'https' : 'http';
   logger.info('Verdant LAN iniciado', { host: config.host, port: config.port, tls: tlsEnabled, media: media.enabled, mediaPort: media.mediaPort });
   console.log(`\nVerdant LAN — ${scheme}://127.0.0.1:${config.port}`);
-  const addresses = detectNetworkAddresses();
+  const addresses = config.production ? [] : detectNetworkAddresses();
   for (const item of addresses) console.log(`${item.kind.padEnd(7)} ${scheme}://${item.address}:${config.port}`);
   if (media.enabled) {
     console.log(`\nVoz/SFU: ativo em UDP/TCP ${media.mediaPort} (${media.listenAddresses.join(', ')})`);
@@ -135,7 +145,7 @@ server.listen(config.port, config.host, () => {
   }
   if (config.publicOrigin) console.log(`Modo online/proxy: ${config.publicOrigin}`);
   if (config.mediaDisabled) console.log('\nVoz/SFU: desativado por MEDIA_DISABLED=1');
-  if (!tlsEnabled) {
+  if (!tlsEnabled && !config.publicOrigin) {
     console.log('\nAviso: voz funciona em localhost, mas outros computadores precisam acessar por HTTPS confiável.');
     console.log('Execute "npm run tls:generate" e siga README.md para confiar a CA nos clientes.');
   }
@@ -170,11 +180,13 @@ function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info('Encerrando servidor', { signal });
+  hub.close();
+  server.closeIdleConnections();
   server.close(() => {
     void (async () => {
       await media.close();
       db.close();
-      process.exit(0);
+      process.exit(signal === 'mediasoup-worker-died' ? 1 : 0);
     })();
   });
   setTimeout(() => process.exit(1), 5000).unref();

@@ -7,7 +7,7 @@ export class ApiError extends Error {
 async function request<T>(url: string, options: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
-  if (token) headers.set('authorization', `Bearer ${token}`);
+  if (token) headers.set('x-verdant-session', token);
   const method = String(options.method ?? 'GET').toUpperCase();
   const attempts = method === 'GET' ? 2 : 1;
   let response: Response | undefined;
@@ -49,7 +49,7 @@ export function uploadFile(
     const query = new URLSearchParams({ name: file.name, uploadId });
     if (replyToId) query.set('replyToId', replyToId);
     xhr.open('POST', `/api/channels/${encodeURIComponent(channelId)}/files?${query}`);
-    xhr.setRequestHeader('authorization', `Bearer ${token}`);
+    xhr.setRequestHeader('x-verdant-session', token);
     xhr.timeout = 10 * 60 * 1000;
 
     let settled = false;
@@ -107,8 +107,8 @@ export const api = {
       method: 'POST', body: JSON.stringify({ name, resumeToken, password })
     }),
 
-  channels: (serverId: string) =>
-    request<{ channels: ChannelInfo[] }>(`/api/servers/${encodeURIComponent(serverId)}/channels`),
+  channels: (serverId: string, token: string) =>
+    request<{ channels: ChannelInfo[] }>(`/api/servers/${encodeURIComponent(serverId)}/channels`, {}, token),
 
   deleteServer: (serverId: string, token: string) =>
     request<{ ok: true }>(`/api/servers/${encodeURIComponent(serverId)}`, { method: 'DELETE' }, token),
@@ -130,10 +130,10 @@ export const api = {
       body: JSON.stringify({ content, initialCaption })
     }, token),
 
-  messages: (channelId: string, before?: string) => {
+  messages: (channelId: string, token: string, before?: string) => {
     const query = new URLSearchParams({ limit: '50' });
     if (before) query.set('before', before);
-    return request<{ messages: MessageInfo[] }>(`/api/channels/${encodeURIComponent(channelId)}/messages?${query}`);
+    return request<{ messages: MessageInfo[] }>(`/api/channels/${encodeURIComponent(channelId)}/messages?${query}`, {}, token);
   },
 
   downloadGrant: (fileId: string, token: string) =>

@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const chromiumCandidates = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'];
+const chromiumCandidates = [process.env.CHROMIUM_PATH, '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'].filter((value): value is string => Boolean(value));
 
 async function freePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -107,15 +107,15 @@ test('Fases 4 e 5 reais: voz Opus e uma transmissão de tela/áudio atravessam o
         '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required'
       ]
     });
-    const ownerPage = await browser.newPage();
-    const alicePage = await browser.newPage();
+    const ownerPage = await (await browser.createBrowserContext()).newPage();
+    const alicePage = await (await browser.createBrowserContext()).newPage();
 
     for (const [page, session] of [[ownerPage, created.session], [alicePage, alice.session]] as const) {
-      await page.goto(base, { waitUntil: 'domcontentloaded' });
-      await page.evaluate((serverId: string, value: any) => {
+      await page.evaluateOnNewDocument((serverId: string, value: any) => {
         localStorage.setItem(`verdant.session.${serverId}`, JSON.stringify({ token: value.token, displayName: value.displayName }));
       }, created.server.id, session);
-      await page.reload({ waitUntil: 'networkidle0' });
+      page.on('pageerror', (error: Error) => t.diagnostic(error.message));
+      await page.goto(base, { waitUntil: 'networkidle0' });
       await page.waitForFunction(() => document.querySelectorAll('.channel-row').length >= 2);
       await clickText(page, '.channel-row', voiceChannel.name);
       await clickText(page, 'button', 'Entrar na chamada');
@@ -180,6 +180,13 @@ test('Fases 4 e 5 reais: voz Opus e uma transmissão de tela/áudio atravessam o
 
     await clickText(ownerPage, '.screen-stage button, .screen-controls button', 'Parar transmissão');
     await alicePage.waitForFunction(() => !document.querySelector('.screen-stage'), { timeout: 8000 });
+  } catch (error) {
+    for (const context of browser?.browserContexts?.() ?? []) {
+      for (const page of await context.pages()) {
+        t.diagnostic((await page.evaluate(() => document.body.innerText)).slice(0, 4000));
+      }
+    }
+    throw error;
   } finally {
     try { await browser?.close(); } catch {}
     await stopServer(child);

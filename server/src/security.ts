@@ -20,7 +20,7 @@ export function hashServerPassword(password: string): string {
 }
 
 export function verifyServerPassword(password: unknown, stored: string | undefined): boolean {
-  if (!stored || typeof password !== 'string') return false;
+  if (!stored || typeof password !== 'string' || password.length > PASSWORD_MAX) return false;
   const [algorithm, costText, saltText, digestText] = stored.split('$');
   if (algorithm !== 'scrypt' || !costText || !saltText || !digestText) return false;
   const cost = Number(costText);
@@ -44,6 +44,10 @@ export class SlidingWindowRateLimiter {
   }
 
   consume(key: string, now = Date.now()): { allowed: boolean; retryAfterSeconds: number } {
+    if (this.#buckets.size > 10_000) {
+      for (const [k, v] of this.#buckets) if (now - v.startedAt >= this.#windowMs) this.#buckets.delete(k);
+      if (!this.#buckets.has(key) && this.#buckets.size > 10_000) return { allowed: false, retryAfterSeconds: Math.ceil(this.#windowMs / 1000) };
+    }
     let bucket = this.#buckets.get(key);
     if (!bucket || now - bucket.startedAt >= this.#windowMs) {
       bucket = { startedAt: now, count: 0 };

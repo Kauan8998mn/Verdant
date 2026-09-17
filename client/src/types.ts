@@ -96,6 +96,7 @@ export interface MediaBootstrap {
 }
 
 export interface Bootstrap {
+  uploadMaxBytes?: number;
   servers: ServerInfo[];
   addresses: NetworkAddress[];
   secureTransport: boolean;

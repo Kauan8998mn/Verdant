@@ -52,3 +52,14 @@ if (existsSync(publicSounds)) cpSync(publicSounds, path.join(out, 'sounds'), { r
 const publicAudio = path.join(client, 'public', 'audio');
 if (existsSync(publicAudio)) cpSync(publicAudio, path.join(out, 'audio'), { recursive: true });
 console.log(`Build concluído: ${path.relative(root, out)}`);
+
+const serverBundle = spawnSync(esbuildBin, [
+  path.join(root, 'server/src/index.ts'), '--bundle', '--platform=node', '--format=esm',
+  '--target=node24', '--packages=external', '--outfile=' + path.join(root, 'dist/server.mjs')
+], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+if (serverBundle.status !== 0) process.exit(serverBundle.status ?? 1);
+
+const configureBundle = spawnSync(esbuildBin, [path.join(root, 'deploy/configure.mjs'),
+  '--bundle', '--platform=node', '--format=esm', '--target=node24', '--packages=external',
+  '--outfile=' + path.join(root, 'dist/configure.mjs')], { cwd: root, stdio: 'inherit' });
+if (configureBundle.status !== 0) process.exit(configureBundle.status ?? 1);

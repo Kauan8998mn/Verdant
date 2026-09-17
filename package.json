@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Private text/voice/screen communication platform for up to six people; Phase 8 security with protected servers, rate limiting, native fullscreen and persistent cross-server voice.",
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=24.13.0 <25"
   },
   "dependencies": {
     "mediasoup": "3.26.0",
@@ -18,7 +18,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "start": "node --experimental-strip-types server/src/index.ts",
+    "start": "node dist/server.mjs",
     "dev": "node --watch --experimental-strip-types server/src/index.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:media": "node scripts/test-media.mjs",
@@ -30,8 +30,8 @@
     "test:phase5": "node scripts/test-media.mjs",
     "test:superstress": "node --experimental-strip-types --test tests/*.test.ts",
     "audit:phase6": "node scripts/spec-audit.mjs --phase=6",
-    "audit:phase7": "node scripts/spec-audit.mjs --phase=7"
-    ,"audit:phase8": "node scripts/spec-audit.mjs --phase=8"
+    "audit:phase7": "node scripts/spec-audit.mjs --phase=7",
+    "audit:phase8": "node scripts/spec-audit.mjs --phase=8"
   },
   "allowScripts": {
     "mediasoup@3.26.0": true,

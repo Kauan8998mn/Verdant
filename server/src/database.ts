@@ -65,9 +65,10 @@ export interface MessageRow {
 export class AppDatabase {
   #db: DatabaseSync;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, databasePath?: string) {
     fs.mkdirSync(dataDir, { recursive: true });
-    const dbPath = path.join(dataDir, 'verdant.sqlite');
+    const dbPath = databasePath ?? path.join(dataDir, 'verdant.sqlite');
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     this.#db = new DatabaseSync(dbPath, { enableForeignKeyConstraints: true, timeout: 3000 });
     this.#db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
     this.#migrate();
@@ -105,6 +106,14 @@ export class AppDatabase {
         display_name TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY(server_id, normalized_name)
+      ) STRICT;
+
+      CREATE TABLE IF NOT EXISTS member_identities (
+        server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        normalized_name TEXT NOT NULL,
+        principal TEXT NOT NULL,
+        PRIMARY KEY(server_id, normalized_name),
+        UNIQUE(server_id, principal)
       ) STRICT;
 
       CREATE TABLE IF NOT EXISTS member_profiles (
@@ -276,6 +285,18 @@ export class AppDatabase {
       ON CONFLICT(server_id, normalized_name)
       DO UPDATE SET role = excluded.role, display_name = excluded.display_name, updated_at = excluded.updated_at
     `).run(serverId, normalizedName, role, displayName, new Date().toISOString());
+  }
+
+  getIdentity(serverId: string, normalizedName: string): string | undefined {
+    return (this.#db.prepare('SELECT principal FROM member_identities WHERE server_id=? AND normalized_name=?').get(serverId, normalizedName) as {principal: string} | undefined)?.principal;
+  }
+
+  identityName(serverId: string, principal: string): string | undefined {
+    return (this.#db.prepare('SELECT normalized_name AS name FROM member_identities WHERE server_id=? AND principal=?').get(serverId, principal) as {name: string} | undefined)?.name;
+  }
+
+  bindIdentity(serverId: string, normalizedName: string, principal: string): void {
+    this.#db.prepare('INSERT INTO member_identities(server_id,normalized_name,principal) VALUES(?,?,?)').run(serverId, normalizedName, principal);
   }
 
   touchMemberProfile(serverId: string, normalizedName: string, displayName: string): MemberProfileRow {
@@ -537,6 +558,10 @@ export class AppDatabase {
         }
       } : {})
     };
+  }
+
+  healthy(): boolean {
+    try { return Boolean(this.#db.prepare('SELECT 1 AS ok').get()); } catch { return false; }
   }
 
   close(): void { this.#db.close(); }

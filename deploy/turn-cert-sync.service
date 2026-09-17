@@ -1,0 +1,7 @@
+[Unit]
+Description=Copy renewed Caddy TURN certificate for Coturn
+After=caddy.service
+[Service]
+Type=oneshot
+ExecStart=/opt/verdant-node/bin/node /opt/verdant/current/deploy/sync-turn-cert.mjs
+UMask=0027

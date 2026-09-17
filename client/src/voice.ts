@@ -64,6 +64,13 @@ export class VoiceController {
   #screenLocalVideo?: HTMLVideoElement;
   #screenRemotes = new Map<string, RemoteScreenMedia>();
   #screenStopping = false;
+  #joinedContext?: Pick<ReturnType<typeof getState>, 'session' | 'server'>;
+  #iceRefreshTimer?: number;
+  #iceGeneration = 0;
+  #iceConfig?: { iceServers: RTCIceServer[]; iceTransportPolicy: RTCIceTransportPolicy; expiresAt?: number; debug: boolean };
+  #iceRestartAttempts = new Map<string, number>();
+  #lastDiagnostics = new Map<string, string>();
+  #transportTimers = new Set<number>();
 
   constructor(realtime: RealtimeClient, notify: (message: string, error?: boolean) => void) {
     this.#realtime = realtime;
@@ -156,13 +163,13 @@ export class VoiceController {
     }
   }
 
-  async join(channelId: string): Promise<void> {
+  async join(channelId: string, recovering = false): Promise<void> {
     if (this.#joining) return;
     if (getState().voice.joinedChannelId === channelId && getState().voice.status === 'connected') return;
-    this.#assertMediaReady();
-    const browsing = getState();
+    if (!recovering) this.#assertMediaReady();
+    const browsing = recovering && this.#joinedContext ? this.#joinedContext : getState();
     if (!browsing.session || !browsing.server) throw new Error('Entre no servidor antes de iniciar a chamada.');
-    if (browsing.voice.joinedServerId && browsing.voice.joinedServerId !== browsing.server.id) {
+    if (!recovering && getState().voice.joinedChannelId && (getState().voice.joinedServerId !== browsing.server.id || getState().voice.joinedChannelId !== channelId)) {
       await this.leave();
     }
     if (!this.#realtime.connected) {
@@ -170,8 +177,7 @@ export class VoiceController {
       await this.#realtime.waitUntilOpen();
     }
     this.#joining = true;
-    const previousChannel = getState().voice.joinedChannelId;
-    if (previousChannel && previousChannel !== channelId) await this.leave();
+    this.#joinedContext = { session: browsing.session, server: browsing.server };
 
     updateVoice({
       status: 'joining', joinedChannelId: channelId,
@@ -229,6 +235,7 @@ export class VoiceController {
       try { await this.#realtime.requestMedia('voice.leave'); } catch {}
     }
     this.#realtime.stop();
+    this.#joinedContext = undefined;
   }
 
   async toggleMute(): Promise<void> {
@@ -343,7 +350,7 @@ export class VoiceController {
   async muteAllRemotes(muted: boolean): Promise<void> {
     this.#muteAllRemote = muted;
     for (const member of getState().voice.members) {
-      if (member.displayName === getState().session?.displayName) continue;
+      if (member.displayName === (getState().voice.joinedDisplayName ?? getState().session?.displayName)) continue;
       const key = normalize(member.displayName);
       if (muted) this.#locallyMuted.add(key);
       else this.#locallyMuted.delete(key);
@@ -571,7 +578,7 @@ export class VoiceController {
     try {
       await this.#cleanupLocal();
       updateVoice({ muted, deafened, inputDeviceId, outputDeviceId, joinedChannelId: channelId });
-      await this.join(channelId);
+      await this.join(channelId, true);
     } catch {
       // join() já atualiza estado e informa o usuário.
     } finally {
@@ -582,7 +589,7 @@ export class VoiceController {
   async handleMediaEvent(event: string, data: any): Promise<void> {
     if (event === 'voice.state') {
       const members = Array.isArray(data?.members) ? data.members as VoiceMemberInfo[] : [];
-      const self = members.find(member => member.displayName === getState().session?.displayName);
+      const self = members.find(member => member.displayName === (getState().voice.joinedDisplayName ?? getState().session?.displayName));
       const joining = getState().voice.status === 'joining';
       updateVoice({
         members,
@@ -596,7 +603,7 @@ export class VoiceController {
     }
     if (event === 'voice.producerAvailable') {
       if (data?.channelId !== getState().voice.joinedChannelId) return;
-      if (data?.displayName === getState().session?.displayName) return;
+      if (data?.displayName === (getState().voice.joinedDisplayName ?? getState().session?.displayName)) return;
       await this.#consumeProducer(data).catch(error => this.#notify(`Falha ao receber ${data?.displayName ?? 'participante'}: ${errorMessage(error)}`, true));
       return;
     }
@@ -661,8 +668,9 @@ export class VoiceController {
 
   async #createTransports(): Promise<void> {
     if (!this.#device) throw new Error('Dispositivo WebRTC não carregado.');
+    await this.#refreshIceConfig();
     const sendOptions = await this.#realtime.requestMedia('transport.create', { direction: 'send' });
-    this.#sendTransport = this.#device.createSendTransport(sendOptions);
+    this.#sendTransport = this.#device.createSendTransport({ ...sendOptions, iceServers: this.#iceConfig!.iceServers, iceTransportPolicy: this.#iceConfig!.iceTransportPolicy });
     this.#wireTransport(this.#sendTransport, 'send');
     this.#sendTransport.on('produce', ({ kind, rtpParameters, appData }: any, callback: any, errback: any) => {
       this.#realtime.requestMedia('producer.create', {
@@ -674,7 +682,7 @@ export class VoiceController {
     });
 
     const recvOptions = await this.#realtime.requestMedia('transport.create', { direction: 'recv' });
-    this.#recvTransport = this.#device.createRecvTransport(recvOptions);
+    this.#recvTransport = this.#device.createRecvTransport({ ...recvOptions, iceServers: this.#iceConfig!.iceServers, iceTransportPolicy: this.#iceConfig!.iceTransportPolicy });
     this.#wireTransport(this.#recvTransport, 'recv');
   }
 
@@ -686,16 +694,68 @@ export class VoiceController {
     });
     transport.on('connectionstatechange', (state: string) => {
       updateVoice({ transportState: `${direction}: ${state}` });
+      if (this.#iceConfig?.debug) console.info('[Verdant WebRTC]', { transportId: transport.id, direction, state });
+      if (state === 'connected') this.#iceRestartAttempts.delete(transport.id);
       if (state === 'failed') void this.#restartTransportIce(transport);
+      if (state === 'disconnected') {
+        const timer = window.setTimeout(() => {
+          this.#transportTimers.delete(timer);
+          if (!transport.closed && transport.connectionState === 'disconnected') void this.#restartTransportIce(transport);
+        }, 10_000);
+        this.#transportTimers.add(timer);
+      }
     });
   }
 
+  async #refreshIceConfig(): Promise<void> {
+    const generation = this.#iceGeneration;
+    const config = await this.#realtime.requestMedia('ice.config');
+    if (generation !== this.#iceGeneration) return;
+    this.#iceConfig = config;
+    for (const transport of [this.#sendTransport, this.#recvTransport]) {
+      if (transport && !transport.closed) await transport.updateIceServers({ iceServers: config.iceServers });
+    }
+    if (generation !== this.#iceGeneration) return;
+    if (this.#iceRefreshTimer) window.clearTimeout(this.#iceRefreshTimer);
+    if (config.expiresAt) {
+      const delay = Math.max(30_000, (config.expiresAt - Date.now()) * 0.75);
+      this.#scheduleIceRefresh(delay, generation);
+    }
+  }
+
+  #scheduleIceRefresh(delay: number, generation: number): void {
+    if (this.#iceRefreshTimer) window.clearTimeout(this.#iceRefreshTimer);
+    this.#iceRefreshTimer = window.setTimeout(() => {
+      if (generation !== this.#iceGeneration) return;
+      void this.#refreshIceConfig().catch(() => {
+        if (generation !== this.#iceGeneration) return;
+        this.#notify('Não foi possível renovar a rota de chamada. Tentando novamente em 30 segundos.', true);
+        this.#scheduleIceRefresh(30_000, generation);
+      });
+    }, delay);
+  }
+
   async #restartTransportIce(transport: any): Promise<void> {
+    if (transport.closed) return;
+    const attempts = this.#iceRestartAttempts.get(transport.id) ?? 0;
+    if (attempts >= 2) {
+      updateVoice({ status: 'error', lastError: 'A conexão de mídia falhou. Saia e entre na chamada para tentar novamente.', transportState: 'ICE failed' });
+      this.#notify('A conexão de mídia falhou após duas tentativas. Saia e entre na chamada para reconectar.', true);
+      return;
+    }
+    this.#iceRestartAttempts.set(transport.id, attempts + 1);
     try {
+      await this.#refreshIceConfig();
       const response = await this.#realtime.requestMedia('transport.restartIce', { transportId: transport.id });
       await transport.restartIce({ iceParameters: response.iceParameters });
+      const timer = window.setTimeout(() => {
+        this.#transportTimers.delete(timer);
+        if (!transport.closed && transport.connectionState !== 'connected') void this.#restartTransportIce(transport);
+      }, 15_000);
+      this.#transportTimers.add(timer);
     } catch {
-      updateVoice({ status: 'reconnecting', transportState: 'ICE falhou; aguardando reconexão' });
+      updateVoice({ status: 'error', transportState: 'ICE falhou', lastError: 'Não foi possível reconectar a mídia. Saia e entre na chamada.' });
+      this.#notify('Não foi possível reconectar a mídia. Saia e entre na chamada.', true);
     }
   }
 
@@ -1285,6 +1345,13 @@ export class VoiceController {
   }
 
   async #cleanupLocal(): Promise<void> {
+    this.#iceGeneration += 1;
+    if (this.#iceRefreshTimer) window.clearTimeout(this.#iceRefreshTimer);
+    this.#iceRefreshTimer = undefined;
+    for (const timer of this.#transportTimers) window.clearTimeout(timer);
+    this.#transportTimers.clear();
+    this.#iceRestartAttempts.clear();
+    this.#lastDiagnostics.clear();
     if (this.#statsTimer) window.clearInterval(this.#statsTimer);
     this.#statsTimer = undefined;
     updateVoice({ mediaRtt: undefined });
@@ -1338,6 +1405,19 @@ export class VoiceController {
           report.forEach((stat: any) => {
             if (!selected && stat.type === 'candidate-pair' && stat.state === 'succeeded' && (stat.nominated || stat.selected)) selected = stat;
           });
+        }
+        if (selected && this.#iceConfig?.debug) {
+          const local = report.get(selected.localCandidateId) as any;
+          const remote = report.get(selected.remoteCandidateId) as any;
+          const diagnostic = { transportId: transport.id, candidateType: local?.candidateType,
+            remoteCandidateType: remote?.candidateType, protocol: local?.protocol,
+            relayProtocol: local?.relayProtocol, rttMs: selected.currentRoundTripTime * 1000 };
+          const signature = JSON.stringify({ ...diagnostic, rttMs: undefined });
+          if (this.#lastDiagnostics.get(transport.id) !== signature) {
+            this.#lastDiagnostics.set(transport.id, signature);
+            console.info('[Verdant ICE selected]', diagnostic);
+            void this.#realtime.requestMedia('transport.diagnostic', diagnostic).catch(() => {});
+          }
         }
         if (selected && typeof selected.currentRoundTripTime === 'number' && Number.isFinite(selected.currentRoundTripTime)) {
           values.push(Math.max(0, selected.currentRoundTripTime * 1000));

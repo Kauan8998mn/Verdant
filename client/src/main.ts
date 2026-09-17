@@ -248,7 +248,7 @@ async function selectChannel(channel: ChannelInfo): Promise<void> {
   updateState({ activeChannel: channel, messages: [], typing: new Set() });
   if (channel.type !== 'text') return;
   try {
-    const { messages } = await api.messages(channel.id);
+    const { messages } = await api.messages(channel.id, getState().session!.token);
     updateState({ messages });
     requestAnimationFrame(() => scrollMessagesToBottom());
   } catch (error) {
@@ -260,7 +260,7 @@ async function refreshChannels(): Promise<void> {
   const state = getState();
   if (!state.server) return;
   try {
-    const result = await api.channels(state.server.id);
+    const result = await api.channels(state.server.id, state.session!.token);
     const active = state.activeChannel ? result.channels.find(item => item.id === state.activeChannel!.id) : undefined;
     updateState({ channels: result.channels, activeChannel: active ?? result.channels.find(item => item.type === 'text') });
   } catch (error) {
@@ -527,8 +527,8 @@ function channelGroup(title: string, items: ChannelInfo[], active: ChannelInfo |
   return group;
 }
 
-function renderMain(): void {
-  const previousComposer = captureComposerState();
+function renderMain(preserveDraft = true): void {
+  const previousComposer = captureComposerState(preserveDraft);
   const previousMessages = captureMessageScrollState();
   const previousVoiceScroll = captureVoiceScrollState();
   const state = getState();
@@ -578,7 +578,7 @@ function renderMain(): void {
 
   if (state.messages.length === 0) {
     const empty = el('div', 'empty-state');
-    empty.append(cardText(`Bem-vindo a #${state.activeChannel.name}`, 'Este é o começo do histórico deste canal. As mensagens são armazenadas localmente no PC host.'));
+    empty.append(cardText(`Bem-vindo a #${state.activeChannel.name}`, 'Este é o começo do histórico deste canal. As mensagens são armazenadas no servidor Verdant.'));
     messages.append(empty);
   } else {
     for (const message of state.messages) messages.append(renderMessage(message));
@@ -597,7 +597,7 @@ function renderMain(): void {
   const composer = el('form', 'composer');
   const attach = el('button', 'secondary-button attach-button', '+');
   attach.type = 'button';
-  attach.title = editing ? 'Finalize ou cancele a edição antes de anexar arquivos' : 'Adicionar arquivo (máx. 500 MB)';
+  attach.title = editing ? 'Finalize ou cancele a edição antes de anexar arquivos' : `Adicionar arquivo (máx. ${(getState().bootstrap?.uploadMaxBytes ?? 50 * 1024 * 1024) / 1024 / 1024} MB)`;
   attach.setAttribute('aria-label', attach.title);
   attach.disabled = state.wsStatus !== 'connected' || Boolean(editing) || sendingAttachmentBatches.has(channelId);
   attach.addEventListener('click', () => chooseFileForUpload(channelId));
@@ -743,7 +743,7 @@ function reconcileMessageList(messages: HTMLElement, nextMessages: MessageInfo[]
     const existingEmpty = messages.querySelector<HTMLElement>(':scope > .empty-state');
     if (existingEmpty && messages.childElementCount === 1) return;
     const empty = el('div', 'empty-state');
-    empty.append(cardText(`Bem-vindo a #${channelName}`, 'Este é o começo do histórico deste canal. As mensagens são armazenadas localmente no PC host.'));
+    empty.append(cardText(`Bem-vindo a #${channelName}`, 'Este é o começo do histórico deste canal. As mensagens são armazenadas no servidor Verdant.'));
     messages.replaceChildren(empty);
     return;
   }
@@ -1075,7 +1075,7 @@ function uploadKey(file: File): string {
 }
 
 function stageAttachments(channelId: string, incoming: File[]): void {
-  const maxBytes = 500 * 1024 * 1024;
+  const maxBytes = (getState().bootstrap?.uploadMaxBytes ?? 50 * 1024 * 1024);
   const current = [...(pendingAttachments.get(channelId) ?? [])];
   const seen = new Set(current.map(uploadKey));
   let rejectedOversize = 0;
@@ -1092,7 +1092,7 @@ function stageAttachments(channelId: string, incoming: File[]): void {
     current.push(file);
   }
 
-  if (rejectedOversize) toast('Um ou mais arquivos ultrapassam o limite de 500 MB.', true);
+  if (rejectedOversize) toast('Um ou mais arquivos ultrapassam o limite de upload do servidor.', true);
   if ((pendingAttachments.get(channelId)?.length ?? 0) + incoming.length > 12) {
     toast('É possível preparar no máximo 12 arquivos por envio.', true);
   }
@@ -1211,8 +1211,8 @@ async function sendAttachmentBatch(
 }
 
 async function performUpload(channelId: string, token: string, file: File, replyToId?: string): Promise<MessageInfo> {
-  const max = 500 * 1024 * 1024;
-  if (file.size > max) throw new Error('O arquivo ultrapassa o limite de 500 MB.');
+  const max = (getState().bootstrap?.uploadMaxBytes ?? 50 * 1024 * 1024);
+  if (file.size > max) throw new Error('O arquivo ultrapassa o limite de upload do servidor.');
 
   const key = uploadKey(file);
   if (activeUploads.has(key)) throw new Error(`${file.name} já está sendo enviado.`);
@@ -1273,7 +1273,7 @@ function beginEdit(message: MessageInfo): void {
   replyDrafts.delete(message.channelId);
   editDrafts.set(message.channelId, message);
   chatDrafts.set(message.channelId, message.content);
-  renderMain();
+  renderMain(false);
   focusComposer();
 }
 
@@ -1284,7 +1284,7 @@ function cancelEdit(channelId: string, rerender = true): void {
   if (previous) chatDrafts.set(channelId, previous);
   else chatDrafts.delete(channelId);
   if (rerender) {
-    renderMain();
+    renderMain(false);
     focusComposer();
   }
 }
@@ -1295,7 +1295,7 @@ function finishEdit(channelId: string): void {
   editPreviousDrafts.delete(channelId);
   if (previous) chatDrafts.set(channelId, previous);
   else chatDrafts.delete(channelId);
-  renderMain();
+  renderMain(false);
   focusComposer();
 }
 
@@ -1570,7 +1570,7 @@ function renderLanding(): void {
   const empty = el('div', 'empty-state');
   const card = el('div', 'empty-state-card');
   card.append(el('h2', '', 'Comunicação privada, primeiro na sua rede.'));
-  card.append(el('p', '', 'Selecione um servidor à esquerda ou crie um novo. O chat, os canais e o histórico ficam no computador host; não há conta externa nem telemetria.'));
+  card.append(el('p', '', 'Selecione um servidor à esquerda ou crie um novo. O chat, os canais e o histórico ficam salvos no servidor Verdant.'));
   const actions = el('div', 'form-actions');
   const create = el('button', 'primary-button', 'Criar servidor');
   create.type = 'button';
@@ -2181,9 +2181,9 @@ function renderEntryDialog(): void {
   const isCreate = entryMode === 'create';
   const head = el('div', 'entry-dialog-head');
   const headCopy = el('div');
-  headCopy.append(el('h2', '', isCreate ? 'Criar servidor local' : `Entrar em ${entryTargetServer?.name ?? 'servidor'}`));
+  headCopy.append(el('h2', '', isCreate ? 'Criar servidor' : `Entrar em ${entryTargetServer?.name ?? 'servidor'}`));
   headCopy.append(el('p', '', isCreate
-    ? 'O servidor ficará hospedado neste computador e poderá ser acessado pela LAN ou Hamachi.'
+    ? 'O servidor ficará salvo na infraestrutura do Verdant e será acessível pela internet.'
     : 'Escolha um nome. Ele precisa ser único entre os participantes ativos deste servidor.'));
   const close = el('button', 'icon-button', '×');
   close.type = 'button';
@@ -2490,11 +2490,11 @@ interface ComposerStateSnapshot {
   selectionEnd: number;
 }
 
-function captureComposerState(): ComposerStateSnapshot | undefined {
+function captureComposerState(preserveDraft = true): ComposerStateSnapshot | undefined {
   const area = mainEl.querySelector<HTMLTextAreaElement>('.composer textarea');
   if (!area) return undefined;
   const channelId = area.dataset.channelId;
-  if (channelId) chatDrafts.set(channelId, area.value);
+  if (channelId && preserveDraft) chatDrafts.set(channelId, area.value);
   return {
     channelId,
     value: area.value,

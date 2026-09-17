@@ -1,0 +1,34 @@
+[Unit]
+Description=Verdant private communication service
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=verdant
+Group=verdant
+WorkingDirectory=/opt/verdant/current
+EnvironmentFile=/etc/verdant/verdant.env
+Environment=VERDANT_ROOT=/opt/verdant/current
+ExecStart=/opt/verdant-node/bin/node /opt/verdant/current/dist/server.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+UMask=0077
+StateDirectory=verdant
+RuntimeDirectory=verdant
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/verdant
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+# Renderer replaces @@...@@; this is not a runnable config until configured.
+listening-port=@@TURN_PORT@@
+tls-listening-port=@@TURN_TLS_PORT@@
+listening-ip=@@TURN_LISTEN_IP@@
+relay-ip=@@TURN_LISTEN_IP@@
+external-ip=@@PUBLIC_IP@@/@@TURN_LISTEN_IP@@
+min-port=@@RELAY_MIN@@
+max-port=@@RELAY_MAX@@
+realm=@@TURN_REALM@@
+server-name=@@TURN_HOST@@
+fingerprint
+use-auth-secret
+static-auth-secret=@@TURN_SECRET@@
+# Only this SFU is an allowed peer. Deny other peers, including metadata services.
+denied-peer-ip=0.0.0.0-255.255.255.255
+denied-peer-ip=::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+allowed-peer-ip=@@PUBLIC_IP@@
+no-multicast-peers
+no-cli
+no-tcp-relay
+no-dtls
+stale-nonce=600
+user-quota=8
+total-quota=64
+max-allocate-lifetime=3600
+log-file=stdout
+simple-log
+@@TLS_SETTINGS@@
