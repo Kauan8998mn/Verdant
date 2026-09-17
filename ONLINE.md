@@ -1,5 +1,10 @@
 # Verdant 0.3.8-stress.1 — modo online sem Hamachi/Radmin
 
+> Guia histórico. Na branch `migration/public-server`, use
+> [implantação pública](docs/DEPLOY_ORACLE.md), [estado atual](CURRENT_STATE.md)
+> e [validação](docs/TESTING.md). O launcher antigo não ativa identidade
+> individual, requisitos de produção ou TURN desta migração.
+
 ## O que este modo faz
 
 O HTTP/WebSocket fica em `127.0.0.1:43110` e é publicado por Caddy em HTTPS público. O SFU mediasoup continua em `43111` UDP/TCP e anuncia o IP público informado em `MEDIA_ANNOUNCED_ADDRESS`. Nenhuma VPN de malha é necessária.

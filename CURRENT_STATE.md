@@ -1,4 +1,68 @@
-# Fase 0 — auditoria antes da migração
+# Estado da migração — retomada em 2026-09-17
+
+Branch: `migration/public-server`. Auditoria original: `a8ae4fd`.
+Implementação recuperada e consolidada: `0bc132b`. Nenhuma alteração anterior
+foi descartada. A auditoria histórica integral está preservada abaixo.
+Ajustes de renovação ICE, recuperação e testes ampliados: `0e3546e`.
+
+## Implementado
+
+- Sessão HTTP em `X-Verdant-Session`, mantendo Bearer para clientes existentes;
+  Caddy mantém Basic individual e sobrescreve identidade/IP do cliente.
+- Histórico/canais exigem sessão do servidor; identidade persistente impede
+  recuperar cargos públicos por apelido. Nomes legados exigem vínculo offline.
+- Produção exige HTTP loopback, origem HTTPS e IPv4 anunciado público validado;
+  health mínimo, bootstrap sem interfaces internas, rate limit pelo IP do proxy.
+  Fora de produção, o bind LAN original e os aliases antigos são mantidos.
+- Credenciais TURN HMAC temporárias, policy/transport de diagnóstico e renovação
+  no cliente; reconexão de voz conserva o contexto original da chamada.
+- Worker unhealthy encerra a aplicação com erro para systemd reiniciar;
+  build JS de produção, Caddy/TLS, Coturn, certificados, releases e backup.
+
+## Evidência local já concluída
+
+Ambiente Linux x64, Node 24.21.0 isolado em
+`~/.local/share/verdant-tools/node-v24.21.0-linux-x64`; Python venv existente em
+`~/.local/share/verdant-tools/python` (Python 3.14.7). O worker mediasoup 3.26.0
+compilado está presente e foi executado nos testes; a falha de binário ausente
+não se reproduziu na retomada.
+
+- Build cliente/servidor/configurador e auditoria estrutural passaram.
+- Verificação final `npm run check` com proxy, Coturn e browser obrigatórios:
+  **97 testes aprovados, zero falhas e zero testes pulados**; build e auditoria OK.
+- Suíte inicial recuperada: 95 testes, 93 aprovados, dois pulados (browser sem
+  caminho no comando geral e TURN opt-in). O teste adicional de expiração de
+  sessão também passou.
+- Caddy real local: Basic + sessão, histórico/upload e isolamento de identidade
+  no upgrade WebSocket aprovados pela suíte.
+- E2E obrigatório com dois Chromiums: áudio bidirecional e tela/áudio via SFU.
+- Coturn real: ChannelData UDP/TCP/TLS e credencial vencida recusada.
+- systemd isolado: sandbox, reinício após matar worker, parada limpa,
+  backup SQLite íntegro e restauração de mensagens/anexos/bytes originais.
+- Coturn no sandbox systemd e sincronização de certificados: hostname inválido
+  recusado, permissões verificadas, certificado inalterado sem restart,
+  certificado renovado com restart e timer ativo. Recursos de QA removidos.
+- UI operada com agent-browser: criar servidor, enviar, editar/cancelar e
+  preservar rascunho anterior.
+
+- E2E ampliado: send/recv com candidato relay nos dois browsers por TURN UDP e
+  TCP, bytes RTP crescentes, tela/áudio e frames de vídeo decodificados.
+- Chamada TCP além do TTL real de 120 s: credenciais renovadas, ambos os
+  transports reiniciaram ICE e RTP continuou. Reconexão da voz também passou
+  mantendo servidor/canal original enquanto o cliente navegava outro servidor.
+
+Detalhes e comandos reproduzíveis em `docs/TESTING.md`.
+
+## Pendente para liberação pública
+
+VM/SSH/domínios não fornecidos na retomada. VM Oracle, DNS/ACME, firewall,
+clientes em redes distintas, relay externo, UDP bloqueado, reboot real, ARM64 e
+carga sustentada de 2–6 usuários continuam **não validados**. Os scripts e o
+roteiro de `docs/DEPLOY_ORACLE.md` não substituem esses gates.
+
+---
+
+# Fase 0 — auditoria antes da migração (registro original)
 
 ## Fonte e método
 

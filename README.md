@@ -1,6 +1,6 @@
 # Verdant LAN 0.5.0-phase8-security
 
-Esta versão mantém o Verdant como aplicação web hospedada pelo computador do dono e conclui a Fase 8 de segurança. Servidores podem ter senha opcional; há limitação de tentativas, validações no host, tela cheia nativa por transmissão, mute individual de transmissão e voz persistente ao navegar entre servidores.
+Esta branch (`migration/public-server`) continua a migração da base LAN para um servidor público. Use **Node 24 LTS** conforme `package.json`. O estado atual e os testes estão em [CURRENT_STATE.md](CURRENT_STATE.md); VM, DNS/ACME e os gates externos ainda exigem validação.
 
 Consulte `PHASE8_SECURITY_REPORT.md` para o escopo e as decisões de compatibilidade.
 
@@ -29,11 +29,11 @@ Compartilhe apenas `data/tls/verdant-lan-ca.crt`; nunca compartilhe chaves `.key
 
 ## Internet sem Hamachi/Radmin
 
-Leia **`ONLINE.md`**. O modo online usa Caddy para HTTPS/autenticação e `MEDIA_ANNOUNCED_ADDRESS` para o SFU. Ele requer IP público roteável ou VPS; a porta 43111 UDP/TCP precisa chegar diretamente ao host.
+Para implantação pública, siga **[docs/DEPLOY_ORACLE.md](docs/DEPLOY_ORACLE.md)** e [docs/TESTING.md](docs/TESTING.md): Caddy com login individual, identidade vinculada, TLS, SFU público e TURN temporário. `ONLINE.md` e os launchers online antigos são registros do modo anterior e não configuram as proteções de produção desta branch.
 
 ## O que foi preservado
 
-`client/src/voice.ts` permanece exatamente igual à 0.3.3. Mudanças posteriores de áudio foram excluídas. A única mudança em `server/src/media.ts` é a configuração de endereço anunciado para NAT/Internet.
+UI, mensagens, canais, SQLite, anexos e SFU foram reaproveitados. A voz recebeu configuração/renovação de ICE e recuperação; os módulos sensíveis de processamento do microfone, boost remoto e preferências de áudio mantêm os hashes verificados pelos testes da base. Os relatórios antigos abaixo descrevem suas respectivas fases históricas.
 
 ## Pré-Fase 6 — 0.3.9-prephase6.1
 

@@ -1,5 +1,18 @@
 # Evidências e hipóteses sobre falhas antigas
 
+## Evidência obtida na retomada (2026-09-17)
+
+O teste com Caddy real confirmou que Basic e `X-Verdant-Session` coexistem em
+histórico, upload e WebSocket, e que outro login não pode usar uma sessão alheia.
+O SFU compilado transportou voz e tela/áudio entre dois browsers locais.
+Coturn retransmitiu pacotes UDP/TCP/TLS e recusou credencial expirada. systemd
+reiniciou aplicação/worker após matar o worker. Os E2Es ampliados também
+confirmaram relay WebRTC UDP/TCP, mídia e renovação além do TTL real de 120 s,
+além de reconexão conservando a chamada original ao navegar outro servidor.
+Essas evidências validam as
+correções locais; não identificam uma causa única do incidente histórico nem
+substituem os testes em redes distintas.
+
 ## Confirmado: conflito de autenticação no modo Caddy antigo
 
 Sintoma esperado: página autenticada abre, mas API autenticada retorna 401. `Caddyfile.online` exige Basic em Authorization; `client/src/api.ts` e upload enviam Bearer no mesmo header. Caddy rejeita antes de chegar à aplicação. LAN sem esse proxy mascara o conflito. A migração usa X-Verdant-Session para sessão da aplicação e conserva Basic para identidade individual no Caddy. Será coberto por teste de proxy real.
