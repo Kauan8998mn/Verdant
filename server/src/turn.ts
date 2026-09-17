@@ -25,7 +25,7 @@ export class TurnCredentials {
     this.#ttl = integer(env.TURN_TTL_SECONDS ?? '3600', 'TURN_TTL_SECONDS', 120, 86400);
     this.#urls = [];
     if (!enabled) return;
-    if (this.#secret.length < 32 || /[\r\n]/.test(this.#secret) || /CHANGE|REPLACE|example/i.test(this.#secret)) throw new Error('TURN_SECRET deve ser um segredo aleatório de ao menos 32 caracteres.');
+    if (!/^[A-Za-z0-9_-]{32,256}$/.test(this.#secret) || /CHANGE|REPLACE|example/i.test(this.#secret)) throw new Error('TURN_SECRET deve ter 32–256 caracteres aleatórios (hex/base64url).');
     const host = hostname(env.TURN_HOST);
     if (!host || host.includes(':')) throw new Error('TURN_HOST deve ser hostname/IPv4 configurado.');
     if (!hostname(env.TURN_REALM)) throw new Error('TURN_REALM obrigatório.');

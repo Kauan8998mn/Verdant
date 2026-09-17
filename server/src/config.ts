@@ -39,7 +39,8 @@ export function loadConfig(rootDir: string, env: NodeJS.ProcessEnv = process.env
     logDir: path.resolve(env.LOG_DIR ?? path.join(rootDir, 'logs')),
     clientDir: path.join(rootDir, 'client', 'dist'),
     uploadsDir: path.resolve(env.UPLOAD_PATH ?? env.UPLOAD_DIR ?? path.join(rootDir, 'uploads')),
-    tlsCert: env.TLS_CERT, tlsKey: env.TLS_KEY, publicOrigin,
+    tlsCert: env.TLS_CERT ? path.resolve(env.TLS_CERT) : undefined,
+    tlsKey: env.TLS_KEY ? path.resolve(env.TLS_KEY) : undefined, publicOrigin,
     allowedHosts: list(env.ALLOWED_HOSTS)?.map(v => v.toLowerCase()) ?? (publicOrigin ? [new URL(publicOrigin).hostname] : undefined),
     uploadMaxBytes: integer(env.UPLOAD_MAX_MB ?? '50', 'UPLOAD_MAX_MB', 1, 500) * 1024 * 1024,
     debugWebrtc: bool(env.VERDANT_DEBUG_WEBRTC), journalOnly: production || bool(env.VERDANT_JOURNAL_ONLY)

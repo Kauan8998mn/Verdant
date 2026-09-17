@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
-import { MAX_FILE_BYTES } from '../../shared/src/domain.ts';
 import type { AppDatabase, FileRow } from './database.ts';
 import { HttpError } from './http-utils.ts';
 

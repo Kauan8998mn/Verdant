@@ -69,6 +69,7 @@ export class VoiceController {
   #iceGeneration = 0;
   #iceConfig?: { iceServers: RTCIceServer[]; iceTransportPolicy: RTCIceTransportPolicy; expiresAt?: number; debug: boolean };
   #iceRestartAttempts = new Map<string, number>();
+  #iceRestarts = new Set<string>();
   #lastDiagnostics = new Map<string, string>();
   #transportTimers = new Set<number>();
 
@@ -94,6 +95,10 @@ export class VoiceController {
     };
     realtime.onConnectionOpen = reconnected => {
       if (reconnected && getState().voice.joinedChannelId) void this.recover();
+    };
+    realtime.onError = message => {
+      if (getState().voice.joinedChannelId) updateVoice({ status: 'error', lastError: message });
+      this.#notify(message, true);
     };
     navigator.mediaDevices?.addEventListener?.('devicechange', () => void this.refreshDevices());
   }
@@ -169,23 +174,23 @@ export class VoiceController {
     if (!recovering) this.#assertMediaReady();
     const browsing = recovering && this.#joinedContext ? this.#joinedContext : getState();
     if (!browsing.session || !browsing.server) throw new Error('Entre no servidor antes de iniciar a chamada.');
-    if (!recovering && getState().voice.joinedChannelId && (getState().voice.joinedServerId !== browsing.server.id || getState().voice.joinedChannelId !== channelId)) {
-      await this.leave();
-    }
-    if (!this.#realtime.connected) {
-      this.#realtime.start(browsing.session.token);
-      await this.#realtime.waitUntilOpen();
-    }
     this.#joining = true;
-    this.#joinedContext = { session: browsing.session, server: browsing.server };
-
-    updateVoice({
-      status: 'joining', joinedChannelId: channelId,
-      joinedServerId: browsing.server.id, joinedServerName: browsing.server.name,
-      joinedDisplayName: browsing.session.displayName,
-      lastError: undefined, transportState: 'preparando SFU'
-    });
     try {
+      if (!recovering && getState().voice.joinedChannelId && (getState().voice.joinedServerId !== browsing.server.id || getState().voice.joinedChannelId !== channelId)) {
+        await this.leave();
+      }
+      if (!this.#realtime.connected) {
+        this.#realtime.start(browsing.session.token);
+        await this.#realtime.waitUntilOpen();
+      }
+      this.#joinedContext = { session: browsing.session, server: browsing.server };
+
+      updateVoice({
+        status: 'joining', joinedChannelId: channelId,
+        joinedServerId: browsing.server.id, joinedServerName: browsing.server.name,
+        joinedDisplayName: browsing.session.displayName,
+        lastError: undefined, transportState: 'preparando SFU'
+      });
       const joined = await this.#realtime.requestMedia('voice.join', { channelId });
       this.#device = new Device();
       await this.#device.load({ routerRtpCapabilities: joined.routerRtpCapabilities });
@@ -207,8 +212,11 @@ export class VoiceController {
     } catch (error) {
       const message = errorMessage(error);
       await this.#cleanupLocal();
-      updateVoice({ status: 'error', joinedChannelId: undefined, lastError: message, transportState: 'erro' });
+      updateVoice({ status: 'error', joinedChannelId: undefined, joinedServerId: undefined,
+        joinedServerName: undefined, joinedDisplayName: undefined, lastError: message, transportState: 'erro' });
       try { await this.#realtime.requestMedia('voice.leave'); } catch {}
+      this.#realtime.stop();
+      this.#joinedContext = undefined;
       this.#notify(message, true);
       throw error;
     } finally {
@@ -707,13 +715,28 @@ export class VoiceController {
     });
   }
 
-  async #refreshIceConfig(): Promise<void> {
+  async #refreshIceConfig(renewTransports = false): Promise<void> {
     const generation = this.#iceGeneration;
     const config = await this.#realtime.requestMedia('ice.config');
     if (generation !== this.#iceGeneration) return;
     this.#iceConfig = config;
     for (const transport of [this.#sendTransport, this.#recvTransport]) {
-      if (transport && !transport.closed) await transport.updateIceServers({ iceServers: config.iceServers });
+      if (generation !== this.#iceGeneration) return;
+      if (transport && !transport.closed) {
+        await transport.updateIceServers({ iceServers: config.iceServers });
+        // Updating the configuration alone leaves existing TURN allocations using
+        // their old credentials. Regather ICE before those credentials expire.
+        if (renewTransports && config.expiresAt && generation === this.#iceGeneration && !transport.closed && !this.#iceRestarts.has(transport.id)) {
+          this.#iceRestarts.add(transport.id);
+          try {
+            const response = await this.#realtime.requestMedia('transport.restartIce', { transportId: transport.id });
+            if (generation !== this.#iceGeneration || transport.closed) return;
+            await transport.restartIce({ iceParameters: response.iceParameters });
+          } finally {
+            this.#iceRestarts.delete(transport.id);
+          }
+        }
+      }
     }
     if (generation !== this.#iceGeneration) return;
     if (this.#iceRefreshTimer) window.clearTimeout(this.#iceRefreshTimer);
@@ -727,7 +750,7 @@ export class VoiceController {
     if (this.#iceRefreshTimer) window.clearTimeout(this.#iceRefreshTimer);
     this.#iceRefreshTimer = window.setTimeout(() => {
       if (generation !== this.#iceGeneration) return;
-      void this.#refreshIceConfig().catch(() => {
+      void this.#refreshIceConfig(true).catch(() => {
         if (generation !== this.#iceGeneration) return;
         this.#notify('Não foi possível renovar a rota de chamada. Tentando novamente em 30 segundos.', true);
         this.#scheduleIceRefresh(30_000, generation);
@@ -736,7 +759,7 @@ export class VoiceController {
   }
 
   async #restartTransportIce(transport: any): Promise<void> {
-    if (transport.closed) return;
+    if (transport.closed || this.#iceRestarts.has(transport.id)) return;
     const attempts = this.#iceRestartAttempts.get(transport.id) ?? 0;
     if (attempts >= 2) {
       updateVoice({ status: 'error', lastError: 'A conexão de mídia falhou. Saia e entre na chamada para tentar novamente.', transportState: 'ICE failed' });
@@ -744,6 +767,7 @@ export class VoiceController {
       return;
     }
     this.#iceRestartAttempts.set(transport.id, attempts + 1);
+    this.#iceRestarts.add(transport.id);
     try {
       await this.#refreshIceConfig();
       const response = await this.#realtime.requestMedia('transport.restartIce', { transportId: transport.id });
@@ -756,6 +780,8 @@ export class VoiceController {
     } catch {
       updateVoice({ status: 'error', transportState: 'ICE falhou', lastError: 'Não foi possível reconectar a mídia. Saia e entre na chamada.' });
       this.#notify('Não foi possível reconectar a mídia. Saia e entre na chamada.', true);
+    } finally {
+      this.#iceRestarts.delete(transport.id);
     }
   }
 
@@ -1351,6 +1377,7 @@ export class VoiceController {
     for (const timer of this.#transportTimers) window.clearTimeout(timer);
     this.#transportTimers.clear();
     this.#iceRestartAttempts.clear();
+    this.#iceRestarts.clear();
     this.#lastDiagnostics.clear();
     if (this.#statsTimer) window.clearInterval(this.#statsTimer);
     this.#statsTimer = undefined;

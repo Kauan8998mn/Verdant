@@ -154,12 +154,14 @@ export class RealtimeClient {
       return;
     }
     if (event.type === 'ready') {
+      if (this.#purpose !== 'app') return;
       const members = Array.isArray(event.presence) ? event.presence as PresenceInfo[] : [];
       updateState({ presence: members });
       this.onPresenceChanged?.(members, true);
       return;
     }
     if (event.type === 'presence') {
+      if (this.#purpose !== 'app') return;
       const members = Array.isArray(event.members) ? event.members as PresenceInfo[] : [];
       updateState({ presence: members });
       this.onPresenceChanged?.(members, false);

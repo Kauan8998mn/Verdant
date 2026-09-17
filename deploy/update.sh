@@ -11,7 +11,7 @@ release="/opt/verdant/releases/$(date -u +%Y%m%dT%H%M%S)-$$"
 install -d -o verdant-build -g verdant-build -m 0755 "$release"
 rsync -a --exclude=.git --exclude=node_modules --exclude=data --exclude=uploads --exclude=logs --exclude=dist --exclude='.env*' --exclude='*.env' --exclude='*.key' --exclude='*.pem' --exclude=backups --exclude=test-results "$src/" "$release/"
 chown -R verdant-build:verdant-build "$release"
-runuser -u verdant-build -- env HOME=/var/cache/verdant-build PATH=/opt/verdant-node/bin:/usr/bin:/bin MEDIASOUP_MAX_CORES=2 bash -ec 'cd "$1"; npm ci --no-audit --no-fund; npm run build' bash "$release"
+runuser -u verdant-build -- env PATH=/opt/verdant-node/bin:/usr/bin:/bin MEDIASOUP_MAX_CORES=2 bash -ec 'cd "$1"; npm ci --no-audit --no-fund; npm run build' bash "$release"
 [[ -x "$release/node_modules/mediasoup/worker/out/Release/mediasoup-worker" ]] || { echo 'Worker mediasoup ausente.' >&2; exit 1; }
 runuser -u verdant-build -- env PATH=/opt/verdant-node/bin:/usr/bin:/bin bash -c 'cd "$1"; node --input-type=module -e '\''import {createWorker} from "mediasoup"; const w=await createWorker(); w.close();'\''' bash "$release"
 chown -R root:root "$release"

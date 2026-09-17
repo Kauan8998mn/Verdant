@@ -4,7 +4,7 @@ import { createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadConfig, isPublicIPv4 } from '../server/src/config.ts';
+import { loadConfig, isPublicIPv4, resolveAnnouncedAddress } from '../server/src/config.ts';
 import { TurnCredentials } from '../server/src/turn.ts';
 import { proxyPrincipal, clientRateKey } from '../server/src/proxy-auth.ts';
 import { bearerToken } from '../server/src/http-utils.ts';
@@ -27,6 +27,12 @@ test('public config rejects private media, exposed HTTP and malformed settings',
   }
 });
 
+test('public media hostname cannot resolve to loopback', async () => {
+  const config = loadConfig('/tmp', { NODE_ENV: 'production', PUBLIC_ORIGIN: 'https://verdant.test',
+    MEDIASOUP_ANNOUNCED_ADDRESS: 'localhost' });
+  await assert.rejects(resolveAnnouncedAddress(config), /IPv4 público/);
+});
+
 test('TURN uses expiring HMAC credentials and limits diagnostic transport modes', () => {
   const env = { TURN_ENABLED: 'true', TURN_SECRET: 'a'.repeat(64), TURN_HOST: 'turn.verdant.test', TURN_REALM: 'verdant.test', TURN_TTL_SECONDS: '120' };
   const service = new TurnCredentials(env);
@@ -41,6 +47,9 @@ test('TURN uses expiring HMAC credentials and limits diagnostic transport modes'
   assert.equal(relay.iceTransportPolicy, 'relay');
   assert.deepEqual(relay.iceServers[0].urls, ['turn:turn.verdant.test:3478?transport=tcp']);
   assert.throws(() => new TurnCredentials({ ...env, TURN_SECRET: 'short' }));
+  for (const secret of ['a'.repeat(32) + '#comment', 'a'.repeat(32) + '\nno-auth', 'a'.repeat(257)]) {
+    assert.throws(() => new TurnCredentials({ ...env, TURN_SECRET: secret }));
+  }
   assert.deepEqual(new TurnCredentials({}).issue().iceServers, []);
 });
 
