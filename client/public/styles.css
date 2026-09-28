@@ -1,4 +1,5 @@
 :root {
+  --app-height: 100vh;
   --bg-0: #08100f;
   --bg-1: #0c1514;
   --bg-2: #101c1a;
@@ -17,6 +18,9 @@
   --radius: 14px;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+@supports (height: 100dvh) {
+  :root { --app-height: 100dvh; }
+}
 
 * { box-sizing: border-box; }
 html, body { margin: 0; width: 100%; height: 100%; background: var(--bg-0); color: var(--text); }
@@ -28,7 +32,7 @@ button { color: inherit; }
   display: grid;
   grid-template-columns: 72px 260px minmax(0, 1fr) 248px;
   width: 100vw;
-  height: 100vh;
+  height: var(--app-height);
   background:
     radial-gradient(circle at 35% 15%, rgba(93, 151, 139, 0.07), transparent 26%),
     var(--bg-0);
@@ -291,12 +295,36 @@ button { color: inherit; }
   .member-sidebar { display: none; }
 }
 @media (max-width: 720px) {
-  .app-shell { grid-template-columns: 60px minmax(0, 1fr); }
-  .channel-sidebar { display: none; }
-  .server-rail { grid-column: 1; }
-  .main-panel { grid-column: 2; }
+  .app-shell { display: block; width: 100vw; height: var(--app-height); }
+  .server-rail, .member-sidebar { display: none; }
+  .channel-sidebar {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    position: fixed;
+    z-index: 60;
+    inset: 0 auto 0 0;
+    width: min(86vw, 340px);
+    min-width: 0;
+    height: var(--app-height);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    transform: translateX(-105%);
+    transition: transform 180ms ease;
+    box-shadow: 18px 0 42px rgba(0, 0, 0, .42);
+  }
+  .mobile-navigation-open .channel-sidebar { transform: translateX(0); }
+  .main-panel { width: 100%; height: var(--app-height); }
+  .mobile-nav-backdrop { position: fixed; z-index: 55; inset: 0; border: 0; background: rgba(0, 0, 0, .52); }
+  .mobile-nav-toggle { display: inline-grid; }
+  .mobile-server-select { display: block; min-width: 0; max-width: 56%; border: 1px solid var(--line); border-radius: 8px; padding: 6px 24px 6px 8px; background: var(--bg-2); color: var(--text); }
+  .server-header { gap: 8px; }
+  .server-title { display: none; }
+  .channel-scroll { height: auto; min-height: 0; }
+  .user-strip { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
   .capability-grid { grid-template-columns: 1fr; }
 }
+
+.mobile-nav-toggle, .mobile-server-select, .mobile-nav-backdrop { display: none; }
 
 /* Fase 3 — arquivos */
 .composer { grid-template-columns: auto minmax(0, 1fr) auto; }
@@ -610,7 +638,7 @@ html, body { background: rgba(var(--bg-0-rgb), var(--app-opacity)); }
 .app-shell {
   zoom: var(--ui-scale);
   width: calc(100vw / var(--ui-scale));
-  height: calc(100vh / var(--ui-scale));
+  height: calc(var(--app-height) / var(--ui-scale));
   background: radial-gradient(circle at 35% 15%, rgba(var(--accent-rgb), .07), transparent 26%), rgba(var(--bg-0-rgb), var(--app-opacity));
 }
 .server-rail { background: rgba(var(--bg-1-rgb), var(--panel-opacity)); }
@@ -2111,4 +2139,47 @@ html[data-light-theme="true"] .voice-control-panel {
 }
 @media (prefers-reduced-motion: reduce) {
   .screen-tile { transition: none; }
+}
+
+/* Navegação e viewport móveis: o drawer substitui as barras laterais do desktop. */
+@media (max-width: 720px) {
+  .app-shell { display: block; zoom: 1; width: 100vw; height: var(--app-height); }
+  /* Evita flicker de composição/GPU em navegadores móveis ao atualizar chat/voz. */
+  .channel-sidebar,
+  .main-panel,
+  .main-header,
+  .user-strip,
+  .composer-region,
+  .voice-control-panel,
+  .voice-member-card,
+  .screen-stage {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .server-rail, .member-sidebar { display: none; }
+  .channel-sidebar {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    position: fixed;
+    z-index: 60;
+    inset: 0 auto 0 0;
+    width: min(86vw, 340px);
+    min-width: 0;
+    height: var(--app-height);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    transform: translateX(-105%);
+    transition: transform 180ms ease;
+    box-shadow: 18px 0 42px rgba(0, 0, 0, .42);
+  }
+  .mobile-navigation-open .channel-sidebar { transform: translateX(0); }
+  .main-panel { width: 100%; height: var(--app-height); }
+  .mobile-nav-backdrop:not([hidden]) { display: block; position: fixed; z-index: 55; inset: 0; border: 0; background: rgba(0, 0, 0, .52); }
+  .mobile-nav-toggle { display: inline-grid; }
+  .mobile-server-select { display: block; min-width: 0; max-width: 56%; border: 1px solid var(--line); border-radius: 8px; padding: 6px 24px 6px 8px; background: var(--bg-2); color: var(--text); }
+  .server-header { gap: 8px; }
+  .server-title { display: none; }
+  .channel-scroll { height: auto; min-height: 0; }
+  .user-strip { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .composer-region { margin-bottom: calc(8px + env(safe-area-inset-bottom)); }
 }

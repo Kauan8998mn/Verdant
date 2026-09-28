@@ -19,6 +19,7 @@ const rail = must<HTMLElement>('#server-rail');
 const channelsEl = must<HTMLElement>('#channel-sidebar');
 const mainEl = must<HTMLElement>('#main-panel');
 const membersEl = must<HTMLElement>('#member-sidebar');
+const mobileNavBackdrop = must<HTMLButtonElement>('#mobile-nav-backdrop');
 const entryDialog = must<HTMLDialogElement>('#entry-dialog');
 const channelDialog = must<HTMLDialogElement>('#channel-dialog');
 const settingsDialog = must<HTMLDialogElement>('#settings-dialog');
@@ -28,6 +29,19 @@ const toasts = must<HTMLElement>('#toasts');
 const realtime = new RealtimeClient();
 const voiceRealtime = new RealtimeClient('voice');
 const voice = new VoiceController(voiceRealtime, toast);
+
+function setMobileNavigationOpen(open: boolean): void {
+  document.documentElement.classList.toggle('mobile-navigation-open', open);
+  mobileNavBackdrop.hidden = !open;
+  for (const toggle of document.querySelectorAll<HTMLButtonElement>('[data-mobile-nav-toggle]')) {
+    toggle.setAttribute('aria-expanded', String(open));
+  }
+}
+
+mobileNavBackdrop.addEventListener('click', () => setMobileNavigationOpen(false));
+window.matchMedia('(min-width: 721px)').addEventListener('change', event => {
+  if (event.matches) setMobileNavigationOpen(false);
+});
 
 let entryTargetServer: ServerInfo | undefined;
 let entryMode: 'join' | 'create' = 'join';
@@ -226,6 +240,7 @@ function activateServer(server: ServerInfo, channels: ChannelInfo[], session: Se
 
 async function selectServer(server: ServerInfo): Promise<void> {
   if (getState().server?.id === server.id) return;
+  setMobileNavigationOpen(false);
   resetUiNotificationTracking();
   memberProfiles = new Map();
   profileRenderRevision += 1;
@@ -238,6 +253,7 @@ async function selectServer(server: ServerInfo): Promise<void> {
 }
 
 async function selectChannel(channel: ChannelInfo): Promise<void> {
+  setMobileNavigationOpen(false);
   const previous = getState().activeChannel;
   if (previous?.type === 'text' && previous.id !== channel.id) {
     realtime.setTyping(previous.id, false);
@@ -379,19 +395,45 @@ function renderRail(): void {
   rail.append(add);
 }
 
+function renderMobileServerSelect(currentServerId?: string): HTMLSelectElement {
+  const select = document.createElement('select');
+  select.className = 'mobile-server-select';
+  select.setAttribute('aria-label', 'Trocar servidor');
+  if (!currentServerId) {
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Servidores';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    select.append(placeholder);
+  }
+  for (const item of getState().bootstrap?.servers ?? []) {
+    const option = document.createElement('option');
+    option.value = item.id;
+    option.textContent = item.name;
+    option.selected = item.id === currentServerId;
+    select.append(option);
+  }
+  select.addEventListener('change', () => {
+    const selected = getState().bootstrap?.servers.find(item => item.id === select.value);
+    if (selected) void selectServer(selected);
+  });
+  return select;
+}
+
 function renderChannels(): void {
   const previousScrollTop = channelsEl.querySelector<HTMLElement>('.channel-scroll')?.scrollTop ?? 0;
   const { server, session, channels, activeChannel } = getState();
   channelsEl.replaceChildren();
   if (!server || !session) {
     const header = el('div', 'server-header');
-    header.append(el('div', 'server-title', 'Verdant LAN'));
+    header.append(el('div', 'server-title', 'Verdant LAN'), renderMobileServerSelect());
     channelsEl.append(header, el('div', 'channel-scroll'));
     return;
   }
 
   const header = el('div', 'server-header');
-  header.append(el('div', 'server-title', server.name));
+  header.append(el('div', 'server-title', server.name), renderMobileServerSelect(server.id));
   const headerActions = el('div', 'server-header-actions');
   const inviteButton = el('button', 'icon-button', '↗');
   inviteButton.type = 'button';
@@ -540,6 +582,14 @@ function renderMain(preserveDraft = true): void {
   mainEl.replaceChildren();
   const header = el('header', 'main-header');
   const heading = el('div', 'main-heading');
+  const navigation = el('button', 'icon-button mobile-nav-toggle', '☰');
+  navigation.type = 'button';
+  navigation.title = 'Abrir canais e servidores';
+  navigation.setAttribute('aria-label', navigation.title);
+  navigation.dataset.mobileNavToggle = 'true';
+  navigation.setAttribute('aria-expanded', String(document.documentElement.classList.contains('mobile-navigation-open')));
+  navigation.addEventListener('click', () => setMobileNavigationOpen(!document.documentElement.classList.contains('mobile-navigation-open')));
+  heading.append(navigation);
   heading.append(el('span', '', state.activeChannel?.type === 'voice' ? '◖' : '#'), el('h1', '', state.activeChannel?.name ?? 'Selecione um canal'));
   const headerRight = el('div', 'main-header-right');
   if (state.activeChannel?.type === 'text') {
@@ -1561,7 +1611,14 @@ function renderLanding(): void {
   mainEl.replaceChildren();
   const header = el('header', 'main-header');
   const heading = el('div', 'main-heading');
-  heading.append(el('span', '', '⌂'), el('h1', '', 'Verdant LAN'));
+  const navigation = el('button', 'icon-button mobile-nav-toggle', '☰');
+  navigation.type = 'button';
+  navigation.title = 'Abrir servidores';
+  navigation.setAttribute('aria-label', navigation.title);
+  navigation.dataset.mobileNavToggle = 'true';
+  navigation.setAttribute('aria-expanded', String(document.documentElement.classList.contains('mobile-navigation-open')));
+  navigation.addEventListener('click', () => setMobileNavigationOpen(!document.documentElement.classList.contains('mobile-navigation-open')));
+  heading.append(navigation, el('span', '', '⌂'), el('h1', '', 'Verdant LAN'));
   const badges = el('div', 'header-status');
   const secure = window.isSecureContext;
   badges.append(el('span', `badge ${secure ? 'ok' : 'warn'}`, secure ? 'Contexto seguro' : 'Chat disponível · mídia exige HTTPS'));

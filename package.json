@@ -34,7 +34,7 @@
     "audit:phase8": "node scripts/spec-audit.mjs --phase=8"
   },
   "allowScripts": {
-    "mediasoup@3.26.0": true,
-    "esbuild@0.28.2": true
+    "mediasoup": true,
+    "esbuild": true
   }
 }
